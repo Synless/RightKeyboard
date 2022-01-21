@@ -1,9 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
-using System.Drawing;
-using System.Text;
 using System.Windows.Forms;
 using RightKeyboard.Win32;
 using System.Diagnostics;
@@ -11,23 +7,30 @@ using System.Runtime.InteropServices;
 using System.IO;
 using System.Globalization;
 
-namespace RightKeyboard {
-	public partial class MainForm : Form {
+namespace RightKeyboard
+{
+    public partial class MainForm : Form
+	{
+		private IntPtr hCurrentDevice = IntPtr.Zero;
+
 		private bool selectingLayout = false;
-		private LayoutSelectionDialog layoutSelectionDialog = new LayoutSelectionDialog();
+		private ushort currentLayout;
+		private readonly LayoutSelectionDialog layoutSelectionDialog = new LayoutSelectionDialog();
 
-		private Dictionary<IntPtr, ushort> languageMappings = new Dictionary<IntPtr, ushort>();
+		private readonly Dictionary<IntPtr, ushort> languageMappings = new Dictionary<IntPtr, ushort>();
 
-		private Dictionary<string, IntPtr> devicesByName = new Dictionary<string, IntPtr>();
+		private readonly Dictionary<string, IntPtr> devicesByName = new Dictionary<string, IntPtr>();
 
 		public MainForm() {
 			InitializeComponent();
 
+			StartFresh();
+
 			RAWINPUTDEVICE rawInputDevice = new RAWINPUTDEVICE(1, 6, API.RIDEV_INPUTSINK, this);
 			bool ok = API.RegisterRawInputDevices(rawInputDevice);
-			if(!ok) {
+			if(!ok)
 				throw Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error());
-			}
+
 			Debug.Assert(ok);
 
 			WindowState = FormWindowState.Minimized;
@@ -35,45 +38,82 @@ namespace RightKeyboard {
 			LoadDeviceList();
 			LoadConfiguration();
 		}
+		private void StartFresh()
+        {
+			string procName = Process.GetCurrentProcess().ProcessName;
+			Process[] processes = Process.GetProcessesByName(procName);
 
-		protected override void OnClosed(EventArgs e) {
+			while (processes.Length > 1)
+			{
+				if (processes[0].StartTime > processes[1].StartTime)
+					processes[0].Kill();
+				else
+					processes[1].Kill();
+
+				processes = Process.GetProcessesByName(procName);
+			}
+		}
+
+		string[] kbList = new string[] { "VID_413" };
+		private bool IsInTheList(string _deviceName)
+        {
+			foreach(string kb in kbList)
+				if (kb.Contains(_deviceName))
+					return true;
+            
+			return false;
+        }
+
+		protected override void OnClosed(EventArgs e)
+		{
 			base.OnClosed(e);
 			SaveConfiguration();
 		}
 
-		private void SaveConfiguration() {
-			try {
+		private void SaveConfiguration()
+		{
+			try
+			{
 				string configFilePath = GetConfigFilePath();
-				using(TextWriter output = File.CreateText(configFilePath)) {
-					foreach(KeyValuePair<string, IntPtr> entry in devicesByName) {
+				using(TextWriter output = File.CreateText(configFilePath))
+				{
+					foreach(KeyValuePair<string, IntPtr> entry in devicesByName)
+					{
 						ushort layout;
-						if(languageMappings.TryGetValue(entry.Value, out layout)) {
+						if(languageMappings.TryGetValue(entry.Value, out layout))
 							output.WriteLine("{0}={1:X04}", entry.Key, layout);
-						}
 					}
 				}
 			}
-			catch(Exception err) {
+			catch(Exception err)
+			{
 				MessageBox.Show("Could not save the configuration. Reason: " + err.Message);
 			}
 		}
 
-		private void LoadConfiguration() {
-			try {
+		private void LoadConfiguration()
+		{
+			try
+			{
 				string configFilePath = GetConfigFilePath();
 				if(File.Exists(configFilePath)) {
-					using(TextReader input = File.OpenText(configFilePath)) {
+					using(TextReader input = File.OpenText(configFilePath))
+					{
 						string line;
-						while((line = input.ReadLine()) != null) {
+						while((line = input.ReadLine()) != null)
+						{
 							string[] parts = line.Split('=');
 							Debug.Assert(parts.Length == 2);
 
 							string deviceName = parts[0];
-							ushort layout = ushort.Parse(parts[1], NumberStyles.HexNumber);
 
-							IntPtr deviceHandle;
-							if(devicesByName.TryGetValue(deviceName, out deviceHandle)) {
-								languageMappings.Add(deviceHandle, layout);
+							if(IsInTheList(deviceName))
+							{
+								ushort layout = ushort.Parse(parts[1], NumberStyles.HexNumber);
+
+								IntPtr deviceHandle;
+								if (devicesByName.TryGetValue(deviceName, out deviceHandle))
+									languageMappings.Add(deviceHandle, layout);
 							}
 						}
 					}
@@ -84,38 +124,50 @@ namespace RightKeyboard {
 			}
 		}
 
-		private static string GetConfigFilePath() {
+		private static string GetConfigFilePath()
+		{
 			string configFileDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RightKeyboard");
-			if(!Directory.Exists(configFileDir)) {
+
+			if(!Directory.Exists(configFileDir))
 				Directory.CreateDirectory(configFileDir);
-			}
 
 			return Path.Combine(configFileDir, "config.txt");
 		}
 
-		private void LoadDeviceList() {
-			foreach(API.RAWINPUTDEVICELIST rawInputDevice in API.GetRawInputDeviceList()) {
-				if(rawInputDevice.dwType == API.RIM_TYPEKEYBOARD) {
+		private void LoadDeviceList()
+		{
+			List<string> kbDes = new List<string>();
+			API.RAWINPUTDEVICELIST[] kbs = API.GetRawInputDeviceList();
+			foreach (API.RAWINPUTDEVICELIST rawInputDevice in kbs)
+			{
+				if(rawInputDevice.dwType == API.RIM_TYPEKEYBOARD)
+				{
 					IntPtr deviceHandle = rawInputDevice.hDevice;
 					string deviceName = API.GetRawInputDeviceName(deviceHandle);
-					devicesByName.Add(deviceName, deviceHandle);
+					if (IsInTheList(deviceName))
+					{
+						kbDes.Add(deviceName);
+						devicesByName.Add(deviceName, deviceHandle);
+					}
 				}
 			}
 		}
 
-		protected override void OnLoad(EventArgs e) {
+		protected override void OnLoad(EventArgs e)
+		{
 			base.OnLoad(e);
 			Hide();
 		}
 
-		protected override void WndProc(ref Message message) {
-			switch(message.Msg) {
+		protected override void WndProc(ref Message message)
+		{
+			switch(message.Msg)
+			{
 				case API.WM_INPUT:
-					if(!selectingLayout) {
+					if(!selectingLayout)
 						ProcessInputMessage(message);
-					}
 					break;
-
+					
 				case API.WM_POWERBROADCAST:
 					ProcessPowerMessage(message);
 					break;
@@ -126,8 +178,10 @@ namespace RightKeyboard {
 			}
 		}
 
-		private void ProcessPowerMessage(Message message) {
-			switch(message.WParam.ToInt32()) {
+		private void ProcessPowerMessage(Message message)
+		{
+			switch(message.WParam.ToInt32())
+			{
 				case API.PBT_APMQUERYSUSPEND:
 					Debug.WriteLine("PBT_APMQUERYSUSPEND");
 					break;
@@ -179,68 +233,67 @@ namespace RightKeyboard {
 				case API.PBT_APMRESUMEAUTOMATIC:
 					Debug.WriteLine("PBT_APMRESUMEAUTOMATIC");
 					break;
-
-				default:
-					break;
 			}
 		}
 
-		private void ProcessInputMessage(Message message) {
+		private void ProcessInputMessage(Message message)
+		{
 			RAWINPUTHEADER header;
 			uint result = API.GetRawInputData(message.LParam, API.RID_HEADER, out header);
 			Debug.Assert(result != uint.MaxValue);
-			if(result == uint.MaxValue) {
+			if(result == uint.MaxValue)
 				throw Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error());
+
+			if(header.hDevice != hCurrentDevice)
+			{
+				hCurrentDevice = header.hDevice;
+				CurrentDeviceChanged(hCurrentDevice);
 			}
-			ValidateCurrentDevice(header.hDevice);
 		}
 
-		private void ValidateCurrentDevice(IntPtr hCurrentDevice) {
+		private void CurrentDeviceChanged(IntPtr currentDevice)
+		{
 			ushort layout;
-			if (!languageMappings.TryGetValue(hCurrentDevice, out layout)) {
+
+			IntPtr deviceHandle = currentDevice;
+			string deviceName = API.GetRawInputDeviceName(deviceHandle);
+
+			if (!IsInTheList(deviceName))
+				return;
+
+			if (!languageMappings.TryGetValue(currentDevice, out layout))
+			{
 				selectingLayout = true;
 				layoutSelectionDialog.ShowDialog();
 				selectingLayout = false;
 				layout = layoutSelectionDialog.Layout.Identifier;
-				languageMappings.Add(hCurrentDevice, layout);
+				languageMappings.Add(currentDevice, layout);
 			}
 
-			ushort currentSysLayout = (ushort)API.GetKeyboardLayout().ToInt32();
-
-			if (currentSysLayout != layout)
-			{
-				SetCurrentLayout(layout);
-				SetDefaultLayout(layout);
-			}
+			SetCurrentLayout(layout);
+			SetDefaultLayout(layout);
 		}
 
-		private void SetCurrentLayout(ushort layout) {
+		private void SetCurrentLayout(ushort layout)
+		{
+			if(layout != currentLayout && layout != 0)
+			{
+				currentLayout = layout;
 				uint recipients = API.BSM_APPLICATIONS;
 				API.BroadcastSystemMessage(API.BSF_POSTMESSAGE, ref recipients, API.WM_INPUTLANGCHANGEREQUEST, IntPtr.Zero, new IntPtr(layout));
+			}
 		}
 
-		private void SetDefaultLayout(ushort layout) {
-			//IntPtr hkl = API.LoadKeyboardLayout(layout, 0);
-			//Debug.Assert(hkl != IntPtr.Zero);
-			//if(hkl == IntPtr.Zero) {
-			//    throw Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error());
-			//}
-
+		private void SetDefaultLayout(ushort layout)
+		{
 			IntPtr hkl = new IntPtr(unchecked((int)((uint)layout << 16 | (uint)layout)));
 
-			bool ok = API.SystemParametersInfo(API.SPI_SETDEFAULTINPUTLANG, 0, new IntPtr[] { hkl }, API.SPIF_SENDCHANGE);
-			//Debug.Assert(ok);
-			//if(!ok) {
-			//	throw Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error());
-			//}
+			bool ok = API.SystemParametersInfo(API.SPI_SETDEFAULTINPUTLANG, 0, new[] { hkl }, API.SPIF_SENDCHANGE);
+			Debug.Assert(ok);
 		}
 
-		private void clearToolStripMenuItem_Click(object sender, EventArgs e)
+		private void exitToolStripMenuItem_Click(object sender, EventArgs e)
 		{
-			languageMappings = new Dictionary<IntPtr, ushort>();
-		}
-
-		private void exitToolStripMenuItem_Click(object sender, EventArgs e) {
 			Close();
 		}
 	}
